@@ -133,6 +133,18 @@ button{font:inherit;cursor:pointer}
 .chip.later{background:#fff;font-weight:600}
 .chip i{font-style:normal;opacity:.85;margin-right:3px;font-size:.68rem}
 .legend{margin:.8rem 0 0}
+.chip em{font-style:normal;font-weight:500;opacity:.9;margin-left:4px;font-size:.66rem}
+.chip:not(.start){border-top-left-radius:0;border-bottom-left-radius:0;margin-left:-.3rem}
+.chip:not(.end){border-top-right-radius:0;border-bottom-right-radius:0;margin-right:-.3rem}
+.tiny{font-size:.75rem}
+.push{margin-left:auto}
+.form-box{margin-top:1rem;padding:.9rem;border:1px solid var(--line);border-radius:12px;background:#fff;display:flex;flex-direction:column;gap:.55rem}
+.form-box h4{margin:0;font-size:.98rem}
+.dt-row{display:grid;grid-template-columns:5.5rem 1fr auto;gap:.4rem;align-items:center}
+.dt-label{font-size:.88rem;font-weight:600;color:var(--muted)}
+.col-actions{display:flex;flex-direction:column;gap:.2rem}
+.rank-list li.has-conflict{border-color:var(--warn);background:var(--warn-bg)}
+.note .warn{margin-top:.3rem;font-weight:600}
 
 /* 목록 */
 .list{list-style:none;margin:.6rem 0;padding:0;display:flex;flex-direction:column;gap:.4rem}
@@ -151,11 +163,8 @@ button{font:inherit;cursor:pointer}
 .modal-bg{position:fixed;inset:0;background:rgba(10,25,15,.45);display:grid;place-items:center;padding:1rem;z-index:50}
 .modal{background:var(--card);border-radius:16px;padding:1.2rem;width:100%;max-width:420px;max-height:90vh;overflow:auto;box-shadow:0 20px 50px rgba(0,0,0,.25)}
 .rank-list{list-style:none;padding:0;margin:.8rem 0;display:flex;flex-direction:column;gap:.4rem}
-.rank-list li{display:flex;align-items:center;gap:.5rem;padding:.5rem .6rem;background:#fff;border:1px solid var(--line);border-radius:10px}
-.rank-list li:first-child{border-color:var(--g500);background:var(--g50)}
-.rank{font-size:.78rem;font-weight:700;background:var(--g700);color:#fff;border-radius:6px;padding:.05rem .4rem}
-.rank-list li:not(:first-child) .rank{background:#9aa39a}
-.rank-list .small{margin-left:auto}
+.rank-list li{display:flex;align-items:flex-start;gap:.5rem;padding:.5rem .6rem;background:#fff;border:1px solid var(--line);border-radius:10px}
+.rank{font-size:.72rem;font-weight:700;background:var(--warn);color:#fff;border-radius:6px;padding:.05rem .4rem}
 .note{background:var(--g50);border-radius:10px;padding:.55rem .7rem;font-size:.9rem}
 .note.warn{background:var(--warn-bg);color:#7a4d0c;font-weight:600}
 
@@ -193,6 +202,7 @@ button{font:inherit;cursor:pointer}
   .cal-cell{min-height:64px;padding:.2rem;border-radius:7px}
   .chip{font-size:.66rem;padding:0 3px}
   .chip i{display:none}
+  .chip em{display:none}
   .who{font-size:.85rem}
   .equip-form{grid-template-columns:1fr 1fr}
   .equip-form .btn{grid-column:span 2}
@@ -293,7 +303,6 @@ const api = {
     if (DEMO) {
       const d = demoLoad();
       list.forEach((row, i) => {
-        if (t === "reservations" && d.reservations.some((r) => r.member_id === row.member_id && r.night === row.night)) return;
         d[t].push({ id: uid(), created_at: new Date(Date.now() + i).toISOString(), ...row });
       });
       demoSave(d); return;
@@ -462,21 +471,39 @@ function PickName({ members, colorOf, onPick, onAdd }) {
 }
 
 // ---------- 예약 달력 ----------
-function useNightMap(data) {
+const DAY_MS = 86400000;
+const HOURS = Array.from({ length: 24 }, (_, i) => i);
+const dayStartMs = (s) => parseDate(s).getTime();
+const toIso = (date, hour) => new Date(parseDate(date).getTime() + hour * 3600000).toISOString();
+const fmtDT = (ms) => { const d = new Date(ms); return `${d.getMonth() + 1}/${d.getDate()}(${DOW[d.getDay()]}) ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const fmtHour = (ms) => { const d = new Date(ms); return d.getMinutes() ? `${d.getHours()}:${pad(d.getMinutes())}` : `${d.getHours()}시`; };
+const nightsOf = (r) => Math.round((dayStartMs(ymd(new Date(r.e))) - dayStartMs(ymd(new Date(r.s)))) / DAY_MS);
+const lastDayOf = (r) => ymd(new Date(r.e - 1)); // 다음날 0시에 끝나면 그 전날까지만 표시
+const withGwa = (name) => { const c = name.charCodeAt(name.length - 1); return name + (c >= 0xac00 && c <= 0xd7a3 && (c - 0xac00) % 28 ? "과" : "와"); };
+const joinWithGwa = (names) => withGwa(names.join(", "));
+const stayLabel = (r) => { const n = nightsOf(r); return n > 0 ? `${n}박` : "당일"; };
+
+// 예약마다 시간·순위·겹침 정보 계산
+function useReservations(data, members) {
   return useMemo(() => {
-    const map = {};
-    [...data.reservations].sort(byCreated).forEach((r) => { (map[r.night] = map[r.night] || []).push(r); });
-    return map;
-  }, [data.reservations]);
+    const nameOf = Object.fromEntries(members.map((m) => [m.id, m.name]));
+    const list = data.reservations.filter((r) => r.start_at && r.end_at)
+      .map((r) => ({ ...r, s: Date.parse(r.start_at), e: Date.parse(r.end_at), name: nameOf[r.member_id] || "?" }))
+      .sort(byCreated);
+    list.forEach((r, i) => {
+      r.overlaps = list.filter((o) => o !== r && o.s < r.e && r.s < o.e);
+      r.rank = 1 + list.slice(0, i).filter((o) => r.overlaps.includes(o)).length; // 먼저 신청한 사람이 앞 순위
+    });
+    return list;
+  }, [data.reservations, members]);
 }
 
 function CalendarPage({ ctx, start, end }) {
-  const { data, members, me, colorOf, run } = ctx;
-  const nightMap = useNightMap(data);
+  const { members, me, colorOf, run } = ctx;
+  const all = useReservations(ctx.data, members);
+  const now = Date.now();
   const today = ymd(new Date());
-  const nameOf = Object.fromEntries(members.map((m) => [m.id, m.name]));
 
-  // 기간 안의 달 목록
   const months = useMemo(() => {
     const list = []; const s = parseDate(start); const e = parseDate(end);
     const d = new Date(s.getFullYear(), s.getMonth(), 1);
@@ -485,19 +512,19 @@ function CalendarPage({ ctx, start, end }) {
   }, [start, end]);
   const initialIdx = Math.max(0, months.findIndex(([y, m]) => y === new Date().getFullYear() && m === new Date().getMonth()));
   const [mi, setMi] = useState(initialIdx);
-  const idx = Math.min(mi, months.length - 1);
+  const idx = Math.min(mi, Math.max(0, months.length - 1));
   const [selected, setSelected] = useState(null);
   const [onlyMine, setOnlyMine] = useState(false);
 
-  // 회원별 통계
+  // 회원별 통계 (1순위인 예약만 사용/예정으로 셈)
   const stats = members.map((m) => {
-    let used = 0, upcoming = 0, waiting = 0;
-    Object.entries(nightMap).forEach(([night, list]) => {
-      const rank = list.findIndex((r) => r.member_id === m.id);
-      if (rank < 0) return;
-      if (rank === 0) { night < today ? used++ : upcoming++; } else if (night >= today) waiting++;
+    let used = 0, usedCount = 0, upcoming = 0, waiting = 0;
+    all.filter((r) => r.member_id === m.id).forEach((r) => {
+      if (r.rank === 1) {
+        if (r.e <= now) { used += nightsOf(r); usedCount++; } else upcoming += nightsOf(r);
+      } else if (r.e > now) waiting++;
     });
-    return { m, used, upcoming, waiting };
+    return { m, used, usedCount, upcoming, waiting };
   });
 
   if (!months.length) return <div className="card">설정에서 이용 기간을 확인해 주세요.</div>;
@@ -508,18 +535,18 @@ function CalendarPage({ ctx, start, end }) {
   for (let i = 0; i < first.getDay(); i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(ymd(new Date(year, month, d)));
   while (cells.length % 7) cells.push(null);
+  const lastCheckout = addDays(end, 1);
 
-  const upcomingNights = Object.keys(nightMap).filter((n) => n >= today).sort()
-    .filter((n) => !onlyMine || nightMap[n].some((r) => r.member_id === me.id));
+  const upcoming = all.filter((r) => r.e > now && (!onlyMine || r.member_id === me.id)).sort((a, b) => a.s - b.s);
 
   return (
     <div className="stack">
       <section className="stats">
-        {stats.map(({ m, used, upcoming, waiting }) => (
+        {stats.map(({ m, used, usedCount, upcoming, waiting }) => (
           <div key={m.id} className={"stat" + (m.id === me.id ? " mine" : "")}>
             <div className="stat-name"><span className="dot" style={{ background: colorOf[m.id] }} />{m.name}</div>
-            <div className="stat-main"><b>{used}</b>박 사용</div>
-            <div className="stat-sub">예정 {upcoming}박{waiting > 0 && <span className="warn"> · 조율 필요 {waiting}일</span>}</div>
+            <div className="stat-main"><b>{used}</b>박 사용{usedCount > 0 && <span className="muted small"> ({usedCount}회)</span>}</div>
+            <div className="stat-sub">예정 {upcoming}박{waiting > 0 && <span className="warn"> · 조율 필요 {waiting}건</span>}</div>
           </div>
         ))}
       </section>
@@ -532,134 +559,168 @@ function CalendarPage({ ctx, start, end }) {
         </div>
         <div className="cal">
           {DOW.map((d, i) => <div key={d} className={"cal-dow" + (i === 0 ? " sun" : i === 6 ? " sat" : "")}>{d}</div>)}
-          {cells.map((night, i) => {
-            if (!night) return <div key={"e" + i} className="cal-cell empty" />;
-            const inPeriod = night >= start && night <= end;
-            const list = nightMap[night] || [];
-            const dow = parseDate(night).getDay();
-            const cls = ["cal-cell", inPeriod ? "" : "out", night === today ? "today" : "", night < today ? "past" : "",
-              list.length > 1 ? "conflict" : "", list.some((r) => r.member_id === me.id) ? "has-mine" : ""].join(" ");
+          {cells.map((day, i) => {
+            if (!day) return <div key={"e" + i} className="cal-cell empty" />;
+            const inPeriod = day >= start && day <= lastCheckout;
+            const ds = dayStartMs(day), de = ds + DAY_MS;
+            const list = all.filter((r) => r.s < de && r.e > ds);
+            // 이 날 안에서 실제로 시간이 겹치는 예약이 있는지
+            const conflict = list.some((r) => r.overlaps.some((o) => list.includes(o) && Math.max(r.s, o.s, ds) < Math.min(r.e, o.e, de)));
+            const dow = parseDate(day).getDay();
+            const cls = ["cal-cell", inPeriod ? "" : "out", day === today ? "today" : "", day < today ? "past" : "",
+              conflict ? "conflict" : ""].join(" ");
             return (
-              <button key={night} className={cls} disabled={!inPeriod} onClick={() => setSelected(night)}>
-                <span className={"cal-num" + (dow === 0 ? " sun" : dow === 6 ? " sat" : "")}>{parseDate(night).getDate()}</span>
+              <button key={day} className={cls} disabled={!inPeriod} onClick={() => setSelected(day)}>
+                <span className={"cal-num" + (dow === 0 ? " sun" : dow === 6 ? " sat" : "")}>{parseDate(day).getDate()}</span>
                 <span className="cal-chips">
-                  {list.map((r, rank) => (
-                    <span key={r.id} className={"chip" + (rank > 0 ? " later" : "")}
-                      style={rank === 0 ? { background: colorOf[r.member_id] } : { borderColor: colorOf[r.member_id], color: colorOf[r.member_id] }}>
-                      {list.length > 1 && <i>{rank + 1}</i>}{nameOf[r.member_id] || "?"}
-                    </span>
-                  ))}
+                  {list.map((r) => {
+                    const startsHere = r.s >= ds, endsHere = r.e <= de;
+                    const time = startsHere && endsHere ? `${fmtHour(r.s)}~${fmtHour(r.e)}` : startsHere ? `${fmtHour(r.s)}~` : endsHere ? `~${fmtHour(r.e)}` : "";
+                    const later = r.rank > 1;
+                    return (
+                      <span key={r.id} className={"chip" + (later ? " later" : "") + (startsHere ? " start" : "") + (endsHere ? " end" : "")}
+                        title={`${r.name} ${fmtDT(r.s)} → ${fmtDT(r.e)}`}
+                        style={later ? { borderColor: colorOf[r.member_id], color: colorOf[r.member_id] } : { background: colorOf[r.member_id] }}>
+                        {later && <i>{r.rank}</i>}{r.name}{time && <em>{time}</em>}
+                      </span>
+                    );
+                  })}
                 </span>
               </button>
             );
           })}
         </div>
         <p className="muted small legend">
-          날짜를 누르면 신청하거나 취소할 수 있어요. 날짜는 <b>그날 밤 1박</b> 기준이에요.
-          한 날짜에 여러 명이 신청하면 먼저 신청한 순서대로 <b>①②③</b> 순위가 붙어요.
-          서로 이야기해서 정하고, 양보하는 사람이 신청을 취소하면 다음 사람이 1순위가 돼요.
+          날짜를 누르면 몇 시부터 몇 시까지 쓸지 정해서 예약할 수 있어요. 1일 오후에 들어가서 2일 오전에 나오면 1일과 2일 달력에 모두 표시돼요.
+          시간이 겹치면 먼저 신청한 순서대로 <b>①②③</b> 순위가 붙고 칸이 주황색이 돼요.
+          서로 이야기해서 정하고, 양보하는 사람이 취소하거나 시간을 바꾸면 돼요.
         </p>
       </section>
 
       <section className="card">
         <div className="row between">
           <h3>다가오는 예약</h3>
-          <label className="check"><input type="checkbox" checked={onlyMine} onChange={(e) => setOnlyMine(e.target.checked)} /> 내 신청만</label>
+          <label className="check"><input type="checkbox" checked={onlyMine} onChange={(e) => setOnlyMine(e.target.checked)} /> 내 예약만</label>
         </div>
-        {upcomingNights.length === 0 ? <p className="muted">아직 예약이 없어요.</p> : (
+        {upcoming.length === 0 ? <p className="muted">아직 예약이 없어요.</p> : (
           <ul className="list">
-            {upcomingNights.map((night) => {
-              const list = nightMap[night];
-              const mine = list.find((r) => r.member_id === me.id);
-              return (
-                <li key={night} className={"list-item" + (list.length > 1 ? " conflict" : "")}>
-                  <button className="link" onClick={() => setSelected(night)}>{fmtNight(night)} 밤</button>
-                  <span className="names">
-                    {list.map((r, rank) => (
-                      <span key={r.id} className={rank === 0 ? "first" : "later-name"}>
-                        {list.length > 1 ? `${rank + 1}순위 ` : ""}{nameOf[r.member_id]}
-                      </span>
-                    ))}
-                  </span>
-                  {list.length > 1 && <span className="badge warn">조율 필요</span>}
-                  {mine && <button className="btn sm danger-ghost" onClick={() => {
-                    if (confirm(`${fmtNight(night)} 신청을 취소할까요?`)) run(() => api.remove("reservations", mine.id), "취소했어요");
-                  }}>취소</button>}
-                </li>
-              );
-            })}
+            {upcoming.map((r) => (
+              <li key={r.id} className={"list-item" + (r.overlaps.length ? " conflict" : "")}>
+                <span className="dot" style={{ background: colorOf[r.member_id] }} />
+                <b>{r.name}</b>
+                <button className="link" onClick={() => setSelected(ymd(new Date(r.s)))}>{fmtDT(r.s)} → {fmtDT(r.e)}</button>
+                <span className="badge">{stayLabel(r)}</span>
+                {r.overlaps.length > 0 && <span className="badge warn">{joinWithGwa(r.overlaps.map((o) => o.name))} 겹침 · {r.rank}순위</span>}
+                {r.note && <span className="muted small">{r.note}</span>}
+                {r.member_id === me.id && <button className="btn sm danger-ghost push" onClick={() => {
+                  if (confirm(`${fmtDT(r.s)} 예약을 취소할까요?`)) run(() => api.remove("reservations", r.id), "취소했어요");
+                }}>취소</button>}
+              </li>
+            ))}
           </ul>
         )}
       </section>
 
-      {selected && <DayModal ctx={ctx} night={selected} nightMap={nightMap} start={start} end={end} onClose={() => setSelected(null)} />}
+      {selected && <DayModal ctx={ctx} day={selected} all={all} start={start} end={end} onClose={() => setSelected(null)} />}
     </div>
   );
 }
 
-function DayModal({ ctx, night, nightMap, start, end, onClose }) {
-  const { me, members, colorOf, run } = ctx;
-  const [count, setCount] = useState(1);
-  const list = nightMap[night] || [];
-  const nameOf = Object.fromEntries(members.map((m) => [m.id, m.name]));
-  const mine = list.find((r) => r.member_id === me.id);
-  const myRank = list.findIndex((r) => r.member_id === me.id) + 1;
+function DayModal({ ctx, day, all, start, end, onClose }) {
+  const { me, colorOf, run, showToast } = ctx;
+  const ds = dayStartMs(day), de = ds + DAY_MS;
+  const list = all.filter((r) => r.s < de && r.e > ds).sort((a, b) => a.s - b.s);
+  const lastCheckout = addDays(end, 1);
 
-  const maxCount = Math.min(14, Math.round((parseDate(end) - parseDate(night)) / 86400000) + 1);
-  const nights = Array.from({ length: count }, (_, i) => addDays(night, i))
-    .filter((n) => n <= end && !(nightMap[n] || []).some((r) => r.member_id === me.id));
-  const lastNight = addDays(night, count - 1);
+  const blank = { sDate: day > end ? end : day, sHour: 14, eDate: addDays(day > end ? end : day, 1), eHour: 11, note: "" };
+  const [form, setForm] = useState(blank);
+  const [editId, setEditId] = useState(null);
+  const set = (k, v) => setForm((f) => {
+    const next = { ...f, [k]: v };
+    if ((k === "sDate" || k === "sHour") && next.eDate && toIso(next.eDate, next.eHour) <= toIso(next.sDate, next.sHour)) next.eDate = addDays(next.sDate, 1);
+    return next;
+  });
 
-  const apply = () => run(async () => {
-    await api.insert("reservations", nights.map((n) => ({ member_id: me.id, night: n })));
-    onClose();
-  }, `${nights.length}박 신청했어요`);
+  const s = Date.parse(toIso(form.sDate, form.sHour)), e = Date.parse(toIso(form.eDate, form.eHour));
+  const others = all.filter((r) => r.id !== editId && r.s < e && s < r.e);
+  let problem = "";
+  if (!form.sDate || !form.eDate) problem = "날짜를 골라 주세요";
+  else if (e <= s) problem = "나가는 시간이 들어가는 시간보다 뒤여야 해요";
+  else if (form.sDate < start || form.eDate > lastCheckout) problem = `이용 기간(${start.replaceAll("-", ".")} ~ ${end.replaceAll("-", ".")}) 안에서 골라 주세요`;
+
+  const startEdit = (r) => {
+    const sd = new Date(r.s), ed = new Date(r.e);
+    setEditId(r.id);
+    setForm({ sDate: ymd(sd), sHour: sd.getHours(), eDate: ymd(ed), eHour: ed.getHours(), note: r.note || "" });
+  };
+
+  const save = () => {
+    if (problem) { showToast(problem); return; }
+    const row = { start_at: new Date(s).toISOString(), end_at: new Date(e).toISOString(), note: form.note.trim() || null };
+    if (editId) run(async () => { await api.update("reservations", editId, row); onClose(); }, "예약을 바꿨어요");
+    else run(async () => { await api.insert("reservations", { member_id: me.id, ...row }); onClose(); }, "예약했어요");
+  };
+
+  const hourSel = (k) => (
+    <select value={form[k]} onChange={(ev) => set(k, Number(ev.target.value))}>
+      {HOURS.map((h) => <option key={h} value={h}>{pad(h)}:00</option>)}
+    </select>
+  );
 
   return (
     <div className="modal-bg" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal" onClick={(ev) => ev.stopPropagation()}>
         <div className="row between">
-          <h3>{fmtNight(night)} 밤</h3>
+          <h3>{fmtNight(day)}</h3>
           <button className="btn ghost sm" onClick={onClose}>닫기</button>
         </div>
-        <p className="muted small">{fmtNight(night)} 체크인 → {fmtNight(addDays(night, 1))} 체크아웃</p>
 
-        {list.length === 0 ? <p className="muted">아직 신청한 사람이 없어요.</p> : (
-          <ol className="rank-list">
-            {list.map((r, i) => (
-              <li key={r.id}>
-                <span className="rank">{i + 1}순위</span>
+        {list.length === 0 ? <p className="muted">이 날은 아직 예약이 없어요.</p> : (
+          <ul className="rank-list">
+            {list.map((r) => (
+              <li key={r.id} className={r.overlaps.length ? "has-conflict" : ""}>
                 <span className="dot" style={{ background: colorOf[r.member_id] }} />
-                <b>{nameOf[r.member_id] || "?"}</b>
-                <span className="muted small">{fmtTime(r.created_at)} 신청</span>
+                <div className="grow">
+                  <div><b>{r.name}</b> {r.overlaps.length > 0 && <span className="rank">{r.rank}순위</span>}</div>
+                  <div className="small">{fmtDT(r.s)} → {fmtDT(r.e)} · {stayLabel(r)}</div>
+                  {r.note && <div className="small muted">{r.note}</div>}
+                  <div className="muted tiny">{fmtTime(r.created_at)} 신청</div>
+                </div>
+                {r.member_id === me.id && (
+                  <div className="col-actions">
+                    <button className="btn ghost sm" onClick={() => startEdit(r)}>수정</button>
+                    <button className="btn ghost sm" onClick={() => { if (confirm("이 예약을 취소할까요?")) run(async () => { await api.remove("reservations", r.id); onClose(); }, "취소했어요"); }}>취소</button>
+                  </div>
+                )}
               </li>
             ))}
-          </ol>
+          </ul>
         )}
-        {list.length > 1 && <div className="note warn">신청이 겹쳤어요. 서로 이야기해서 정해 주세요.</div>}
 
-        {mine ? (
-          <div className="stack-sm">
-            <div className="note">내 순위: <b>{myRank}순위</b></div>
-            <button className="btn danger full" onClick={() => run(async () => { await api.remove("reservations", mine.id); onClose(); }, "신청을 취소했어요")}>
-              이 날 신청 취소
-            </button>
+        <div className="form-box">
+          <h4>{editId ? "내 예약 수정" : "새 예약"}</h4>
+          <div className="dt-row">
+            <span className="dt-label">들어가는 날</span>
+            <input type="date" value={form.sDate} min={start} max={end} onChange={(ev) => set("sDate", ev.target.value)} />
+            {hourSel("sHour")}
           </div>
-        ) : (
-          <div className="stack-sm">
-            <label className="row">
-              <span>연속으로</span>
-              <select value={count} onChange={(e) => setCount(Number(e.target.value))}>
-                {Array.from({ length: Math.max(1, maxCount) }, (_, i) => i + 1).map((n) => <option key={n} value={n}>{n}박</option>)}
-              </select>
-              {count > 1 && <span className="muted small">{fmtShort(night)} ~ {fmtShort(lastNight)} 밤</span>}
-            </label>
-            <button className="btn primary full" disabled={!nights.length} onClick={apply}>
-              {count > 1 ? `${nights.length}박 신청하기` : "이 날 신청하기"}
-            </button>
-            {list.length > 0 && <p className="muted small">신청하면 {list.length + 1}순위가 돼요.</p>}
+          <div className="dt-row">
+            <span className="dt-label">나오는 날</span>
+            <input type="date" value={form.eDate} min={form.sDate} max={lastCheckout} onChange={(ev) => set("eDate", ev.target.value)} />
+            {hourSel("eHour")}
           </div>
-        )}
+          <input value={form.note} onChange={(ev) => set("note", ev.target.value)} placeholder="메모 (선택, 예: 가족 4명)" />
+          {problem ? <div className="error">{problem}</div> : (
+            <div className="note">
+              {fmtDT(s)} → {fmtDT(e)} · <b>{stayLabel({ s, e })}</b>
+              {others.length > 0 && <div className="warn">⚠ {others.map((o) => `${o.name}(${fmtDT(o.s)}~${fmtDT(o.e)})`).join(", ")} 예약과 시간이 겹쳐요. 신청은 되지만 조율이 필요해요.</div>}
+            </div>
+          )}
+          <div className="row end">
+            {editId && <button className="btn ghost" onClick={() => { setEditId(null); setForm(blank); }}>새 예약으로</button>}
+            <button className="btn primary" disabled={!!problem} onClick={save}>{editId ? "수정 저장" : "예약하기"}</button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -858,8 +919,8 @@ function SettingsPage({ ctx, start, end }) {
 
   const savePeriod = () => {
     if (!s || !e || s > e) { showToast("시작일이 종료일보다 늦을 수 없어요"); return; }
-    const outside = data.reservations.filter((r) => r.night < s || r.night > e).length;
-    if (outside && !confirm(`새 기간 밖에 있는 신청 ${outside}건은 달력에 보이지 않게 돼요(기록은 남아요). 계속할까요?`)) return;
+    const outside = data.reservations.filter((r) => { const d = ymd(new Date(r.start_at)); return d < s || d > e; }).length;
+    if (outside && !confirm(`새 기간 밖에 있는 예약 ${outside}건은 달력에 보이지 않게 돼요(기록은 남아요). 계속할까요?`)) return;
     run(async () => { await api.setSetting("period_start", s, me.name); await api.setSetting("period_end", e, me.name); }, "이용 기간을 바꿨어요");
   };
 

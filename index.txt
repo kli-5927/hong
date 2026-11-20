@@ -6,10 +6,33 @@
   <title>캠핑족</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⛺</text></svg>" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css" />
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    // 화면에 오류를 보여주는 장치 (문제가 생기면 무엇이 잘못됐는지 바로 보이게)
+    window.__showError = function (msg) {
+      var box = document.getElementById("boot-error");
+      if (!box) { box = document.createElement("pre"); box.id = "boot-error";
+        box.style.cssText = "position:fixed;left:12px;right:12px;bottom:12px;z-index:9999;background:#fff3f3;color:#a00;border:1px solid #e6b3b3;border-radius:10px;padding:12px;font-size:13px;white-space:pre-wrap;max-height:40vh;overflow:auto";
+        (document.body || document.documentElement).appendChild(box); }
+      box.textContent = "⚠ 오류가 났어요. 이 내용을 복사해서 알려주세요.
+
+" + msg;
+    };
+    window.addEventListener("error", function (e) { window.__showError((e.message || "스크립트를 불러오지 못했어요") + (e.filename ? "
+" + e.filename + ":" + e.lineno : "") ); }, true);
+    window.addEventListener("load", function () {
+      var miss = [];
+      if (!window.React) miss.push("React");
+      if (!window.ReactDOM) miss.push("ReactDOM");
+      if (!window.Babel) miss.push("Babel");
+      if (!window.supabase) miss.push("Supabase");
+      if (miss.length) window.__showError("외부 라이브러리를 불러오지 못했어요: " + miss.join(", ") + "
+인터넷 연결이나 학교·회사 네트워크 차단을 확인해 주세요.");
+    });
+  </script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.26.10/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
   <style>
 :root{
   --g900:#14291d; --g800:#1b3a28; --g700:#245035; --g600:#2f6b45; --g500:#3f8558; --g100:#e3ede5; --g50:#f1f5f0;
@@ -179,7 +202,7 @@ button{font:inherit;cursor:pointer}
   </style>
 </head>
 <body>
-<div id="root"></div>
+<div id="root"><p style="text-align:center;margin-top:40vh;color:#666">불러오는 중…</p></div>
 <script type="text/babel" data-presets="react">
 // =====================================================================
 //  캠핑족 — 캠핑장 이용 예약 공유 사이트
